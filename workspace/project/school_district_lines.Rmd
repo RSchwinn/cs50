@@ -1,0 +1,425 @@
+---
+title: "School District Maps"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    navbar:
+      - {icon: "fa-home", href: "https://ideasarchive.org", align: right }
+      - {icon: "fa-github", href: "https://github.com/rschwinn", align: right }
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+# Private School Data {data-icon="fa-map"}
+
+------------
+
+```{r, eval = F, include=FALSE}
+library(tigris)
+library(leaflet)
+library(tidyverse)
+library(sf)
+library(sp)
+library(jsonlite)
+library(rmapshaper)
+
+download_acs_tract_data = function(state = "11",
+                             counties = "001",
+                             variables = "NAME,B19013_001E"){
+  # state = "11"
+  # counties = "001"
+  # variables = "NAME,B19013_001E"
+  df = NULL
+  for (county in counties) {
+    json_data = RCurl::getURL(
+      paste0(
+        "https://api.census.gov/data/2017/acs/acs5?get=",
+        variables,
+        "&for=block%20group:*&in=state:",
+        state,
+        "%20county:",
+        county,
+        "&key=9140104d5a1cae9604fdb7a75d1b9347197f912a"
+      )
+    )
+    temp_df = json_data %>%
+      fromJSON %>%
+      data.frame
+    names(temp_df) <- as.character(unlist(temp_df[1,]))
+    temp_df <- temp_df[-1,] %>%
+      mutate(GEOID = paste0(state, county, tract, `block group`))
+    df = rbind(df, temp_df)
+  }
+return(df)
+}
+
+# state 51 is VA
+VA_counties = c(
+##   "107", # Loudoun
+##   "683", # Manassas
+##   "685", # Manassas Park
+##   "153", # Prince William
+  "510", # Alexandria
+  "013", # Arlington
+  "059", # Fairfax
+  "600", # Fairfax City
+  "610" # Falls Church
+)
+
+VA_df = download_acs_data(
+  state = 51,
+  counties = VA_counties,
+  variables = "NAME,B19013_001E"
+)
+
+MD_counties = c(
+##   "033",# Prince George's
+##   "017",# Charles
+  "031" # Montgomery
+)
+
+MD_df = download_acs_data(
+  state = 24,
+  MD_counties,
+  variables = "NAME,B19013_001E"
+)
+
+
+df = download_acs_data(state = "24",
+                       counties = paste(VA_counties, collapse = ","))
+
+DC_counties = c(
+  "001"
+  )
+
+DC_df = download_acs_data(
+  state = 11,
+  DC_counties,
+  variables = "NAME,B19013_001E"
+)
+
+df = rbind(#DC_df,
+           MD_df,
+           VA_df)
+
+saveRDS(df, "ACS_df.RDS")
+
+df = readRDS("ACS_df.RDS")
+
+DC_block_groups <- block_groups(state = "11")
+MD_block_groups <- block_groups(state = "24")
+VA_block_groups <- block_groups(state = "51")
+
+saveRDS(DC_block_groups, "DC_block_groups.RDS")
+saveRDS(MD_block_groups, "MD_block_groups.RDS")
+saveRDS(VA_block_groups, "VA_block_groups.RDS")
+
+all_block_groups = raster::bind(readRDS("DC_block_groups.RDS"),
+                  readRDS("MD_block_groups.RDS"),
+                  readRDS("VA_block_groups.RDS"))
+
+map_w_data = merge(all_block_groups,
+                   df,
+                   by = "GEOID")
+
+map_w_data@polygons = map_w_data@polygons[!is.na(map_w_data@data$tract)]
+map_w_data@plotOrder = map_w_data@plotOrder[!is.na(map_w_data@data$tract)]
+map_w_data@data = map_w_data@data[!is.na(map_w_data@data$tract),]
+
+
+map_w_data@data$value = map_w_data@data$B19013_001E
+map_w_data@data$value = as.numeric(as.character(map_w_data@data$value))
+map_w_data@data$value[map_w_data@data$value == -666666666] = NA
+
+saveRDS(map_w_data, "map_data.RDS")
+DC_districts <- school_districts("District of Columbia") # 11
+   VA_districts <- school_districts("Virginia") # 51
+   MD_districts <- school_districts("Maryland") # 24
+
+   districts = raster::bind(DC_districts,
+                   MD_districts,
+                   VA_districts)
+   saveRDS(districts, "districts.RDS")
+
+
+```
+
+
+```{r}
+library(tidyverse)
+# Preps the EDU data
+# variable names ----
+library(openxlsx)
+variable_layout = read.xlsx("Layout 2017-18 PU.xlsx") %>%
+    filter(Name %in% c("PINST", "NUMSTUDS", "S_KG", "STTCH_RT", 
+                       "ORIENT", "TYPOLOGY", "LEVEL", "TOTHRS", "UCOMMTYP", 
+                       "LATITUDE18", "LONGITUDE18", "P_ASIAN", 
+                       "P_BLACK", "P_HISP", "P_INDIAN", "P_PACIFIC", "P_TR", 
+                       "P_WHITE","PADDRS", "PCITY", "PSTABB","PZIP", "PPHONE"
+                     #, "ULOCALE18", "RELIG", "REGION", "MALES","LOGR2018", "HIGR2018", "SIZE", "DIOCESE","NUMTEAC"
+                     )) %>%
+    select(Name, Label)
+
+# Variable codes and definitions ----
+TYPOLOGY = 
+rbind(c("1", "Catholic, parochial"),
+c("2", "Catholic, diocesan"),
+c("3", "Catholic, private"),
+c("4", "Other Religious, Conservative Christian"),
+c("5", "Other Religious, affiliated"),
+c("6", "Other Religious, unaffiliated"),
+c("7", "Nonsectarian, Regular"),
+c("8", "Nonsectarian, special emphasis"),
+c("9", "Nonsectarian, special education")
+) %>%
+    data.frame(stringsAsFactors = F)
+names(TYPOLOGY) = c("TYPOLOGY", "TYPOLOGY_def")
+TYPOLOGY[,1] = as.numeric(TYPOLOGY[,1])
+
+UCOMMTYP = rbind(c("1", "City"),
+c("2", "Suburb"),
+c("3", "Town"),
+c("4", "Rural "))%>%
+    data.frame()
+names(UCOMMTYP) = c("UCOMMTYP", "UCOMMTYP_def")
+UCOMMTYP[,1] = as.numeric(UCOMMTYP[,1])
+
+ORIENT= rbind(c("1", "Roman Catholic"),
+c("2", "African Methodist Episcopal"),
+c("3", "Amish"),
+c("4", "Assembly of God"),
+c("5", "Baptist"),
+c("6", "Brethren"),
+c("7", "Calvinist"),
+c("8", "Christian, no specific denomination"),
+c("10", "Church of God"),
+c("11", "Church of God in Christ"),
+c("12", "Church of the Nazarene"),
+c("13", "Disciples of Christ"),
+c("14", "Episcopal"),
+c("15", "Friends"),
+c("16", "Greek Orthodox"),
+c("17", "Islamic"),
+c("18", "Jewish"),
+c("19", "Latter Day Saints"),
+c("20", "Lutheran Church - Missouri Synod"),
+c("21", "Evangelical Lutheran Church in America"),
+c("24", "Mennonite"),
+c("25", "Methodist"),
+c("26", "Pentecostal"),
+c("27", "Presbyterian"),
+c("28", "Seventh-day Adventist"),
+c("29", "Other"),
+c("30", "Nonsectarian")) %>%
+    data.frame()
+names(ORIENT) = c("ORIENT", "ORIENT_def")
+ORIENT[,1] = as.numeric(ORIENT[,1])
+
+LEVEL = rbind(c("1", "Elementary"),
+c("2", "Secondary"),
+c("3", "Combined"))%>%
+    data.frame()
+names(LEVEL) = c("LEVEL", "LEVEL_def")
+LEVEL[,1] = as.numeric(LEVEL[,1])
+
+# loads data ----
+
+df = read.csv("pss1718_pu.csv", stringsAsFactors = F) %>%
+    select(c("PSTABB",as.character(variable_layout$Name))) %>%
+    rename(lat = LATITUDE18,
+           long = LONGITUDE18)
+
+df = left_join(df, TYPOLOGY, by = "TYPOLOGY") %>%
+    left_join(UCOMMTYP, by = "UCOMMTYP") %>%
+    left_join(ORIENT, by = "ORIENT") %>%
+    left_join(LEVEL, by = "LEVEL") %>%
+    select(-c(TYPOLOGY, LEVEL, ORIENT, UCOMMTYP))
+
+names(df) = gsub("_def","",names(df))
+# county selection ----
+selected_counties = c("24031", # Montgommery
+                      "51510", # Alexandria
+                      "51013", # Arlington
+                      "51059", # Fairfax
+                      "51600", # Fairfax City
+                      "51610" # Falls Church
+                      ) 
+z2c = read.csv("uszips.csv", stringsAsFactors = F) %>%
+    filter(county_fips %in% selected_counties)
+
+# This overwrites the mailing zip with the location zip if the mailing address and the location address are not the same.
+df[(!is.na(df$PL_ZIP)), "PZIP"] = df[(!is.na(df$PL_ZIP)), "PL_ZIP"]
+df = df %>%
+    filter(PZIP %in% z2c$zip,
+           !PINST %in% c("GRIGGS INTERNATIONAL ACADEMY",
+                         "PATHWAYS SCHOOL--DUVAL RE-ENTRY",
+                         "PATHWAYS SCHOOL--ANNE ARUNDEL",
+                         "PATHWAYS SCHOOL -- CROSSLAND RE-ENTRY"))
+
+# makes popup ----
+df = df %>%
+    select(PINST, NUMSTUDS, S_KG, STTCH_RT, 
+             ORIENT, TYPOLOGY, LEVEL, TOTHRS, UCOMMTYP, P_ASIAN, 
+             P_BLACK, P_HISP, P_INDIAN, P_PACIFIC, P_TR, 
+             P_WHITE,PADDRS, PCITY, PSTABB,PZIP, PPHONE, everything()) %>%
+   mutate(STTCH_RT = round(STTCH_RT ,1), 
+          TOTHRS = round(TOTHRS ,1), 
+          P_ASIAN = round(P_ASIAN ,1), 
+          P_BLACK = round(P_BLACK ,1), 
+          P_HISP = round(P_HISP ,1), 
+          P_INDIAN = round(P_INDIAN ,1), 
+          P_PACIFIC = round(P_PACIFIC ,1), 
+          P_TR = round(P_TR ,1), 
+          P_WHITE = round(P_WHITE ,1))
+df$popup = ""
+for(i in 1:nrow(df)){
+    x = data.frame(t(df[i,] %>%
+                         select(-lat, -long)
+    ))
+    names(x) = "Data"
+    x$Name = rownames(x)
+    x = left_join(x, variable_layout, by = "Name")
+    
+    x = x[,c("Label", "Data")]
+    
+    df$popup[i] = knitr::kable(x, format = "html")
+}
+
+
+
+```
+
+```{r}
+library(tigris)
+library(leaflet)
+library(tidyverse)
+library(sf)
+library(sp)
+library(jsonlite)
+library(rmapshaper)
+
+districts = readRDS("districts.RDS")
+
+map_data = readRDS("map_data.RDS")
+
+resize_sf_object = function(x, target_size = 100000) {
+  require(rmapshaper)
+    class(target_size) = "bytes"
+    percent_of_pixels = (target_size) / (pryr::object_size(x))
+    class(percent_of_pixels) = "numeric"
+    percent_of_pixels = min(1, percent_of_pixels)
+    x = ms_simplify(x, keep = percent_of_pixels)
+}
+
+map_data = resize_sf_object(map_data, 10^7)
+
+districts = resize_sf_object(districts, 10^5)
+
+mnPalette <- colorNumeric(
+  palette = colorRampPalette(colors = c("white", "red"),
+                             space = "Lab")(length(unique(map_data@data$value))),
+  domain = map_data@data$value[!is.na(map_data@data$value)]
+)
+
+
+
+
+leaflet() %>%
+  # Base groups
+  # addTiles("blank", group = "Blank") %>%
+  addProviderTiles(providers$Stamen.TonerLite,
+        options = providerTileOptions(noWrap = TRUE)
+      ) %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+  addProviderTiles(providers$OpenStreetMap.BlackAndWhite, group = "OSM") %>%
+  #  addPolygons(
+  #   data = districts,
+  #   fillOpacity = 0,
+  #   weight = 2,
+  #   label = ~districts@data$NAME,
+  #   color = "yellow",
+  #   group = "School Districts"
+  # ) %>%
+  addPolygons(
+    data = map_data,
+    fillOpacity = 0.4,
+    weight = 1,
+    color = ~ mnPalette(map_data@data$value),
+    label = ~ (paste0("Median Household Income\n",
+      "$", format(
+        as.numeric(map_data@data$value),
+        nsmall = 0,
+        big.mark = ","
+      )
+    )),
+    group = "Median Household Income"
+  ) %>%
+    addCircles(data = df,
+               ~long, 
+               ~lat,
+               fillOpacity = 0.7,
+               weight = 0.2,
+               radius = ~as.numeric(NUMSTUDS),
+               popup = ~as.character(popup),
+               label = ~as.character(PINST),
+               group = "Schools"
+               ) %>%
+  addLayersControl(
+    baseGroups = c("Toner Lite", "OSM", "Blank"),
+    overlayGroups = c(
+                      "Median Household Income",
+                      "Schools"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  setView(lng = -77.0369,
+          lat = 38.9072,
+          zoom = 10)
+                   
+   
+   # it = st_intersection(st_as_sf(districts),
+   #                    st_as_sf(map_data))
+     
+   # class(it)
+                   # examples:
+                   # https://api.census.gov/data/2017/acs/acs5/examples.html
+                   # https://api.census.gov/data/2017/acs/acs5/profile/examples.html
+                   # https://api.census.gov/data/2017/acs/acs5?get=NAME,B19013_001E&for=block%20group:*&in=state:01%20county:025
+                   # "B06011_001E"
+                   # "B19013_001E"
+                   # "https://github.com/RSchwinn/schools.git"
+                   # census_api_key = "9140104d5a1cae9604fdb7a75d1b9347197f912a"
+                   
+```
+
+
+
+# Data
+
+------------
+
+```{r}
+library(DT)
+datatable(
+  data = df %>% select(-popup),
+  filter = "top",
+  extensions = c("ColReorder",
+                 "Buttons",
+                 "FixedHeader"),
+  options = list(
+    colReorder = TRUE,
+    dom = "Bfrtlip",
+    buttons = c("colvis", "copy", "csv", "excel", "pdf", "print"),
+    scrollY = TRUE,
+    fixedHeader = TRUE,
+    pageLength = 15
+  ),
+  rownames = FALSE
+)
+
+```
+

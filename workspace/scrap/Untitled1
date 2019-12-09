@@ -1,0 +1,24 @@
+# export API_KEY=pk_71c8895a76ad4e72ac449501ae9bcd3e
+import os
+
+from cs50 import SQL
+from flask import Flask, flash, jsonify, redirect, render_template, request, session
+from flask_session import Session
+from tempfile import mkdtemp
+from werkzeug.exceptions import default_exceptions, HTTPException, InternalServerError
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from helpers import apology, login_required, lookup, usd
+
+db = SQL("sqlite:///finance.db")
+
+
+stocks = db.execute("SELECT symbol, SUM(shares) as total_shares FROM transactions WHERE id = :user_id GROUP BY symbol HAVING total_shares > 0", user_id=4)
+
+    grand_total = 0
+
+    for stock in stocks:
+        current_prices[stock["symbol"]] = lookup(stock["symbol"])
+        grand_total = grand_total + (lookup(stock["symbol"])["price"] * stock.total_shares)
+
+    grand_total = grand_total + cash

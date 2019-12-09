@@ -1,0 +1,44 @@
+body
+{
+    font-size: larger;
+    font-family: sans;
+}
+
+h1
+{
+    background-color: grey;
+    color: white;
+    font-size: larger;
+    font-family: sans;
+    text-align: center;
+}
+
+#unique
+{
+    border: 4px dotted blue;
+}
+
+table
+{
+    border: 1px solid white;
+    text-align: center;
+    width:100%;
+    font-size: small;
+}
+
+tr
+{
+    height: 50px;
+}
+
+td
+{
+    border: 1px solid white;
+    color: white;
+}
+
+.students
+{
+    background-color: yellow;
+    opacity: 0.7;
+}

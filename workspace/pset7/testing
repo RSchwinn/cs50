@@ -1,0 +1,21 @@
+cd environment/pset7/similarities
+
+./compare --lines inputs/Genesis-ASV.txt inputs/Genesis-ESV.txt
+./compare --sentences inputs/Genesis-ASV.txt inputs/Genesis-ESV.txt
+./compare --substrings 1 inputs/Genesis-ASV.txt inputs/Genesis-ESV.txt
+./compare --substrings 2 inputs/Genesis-ASV.txt inputs/Genesis-ESV.txt
+
+./compare --lines inputs/LittlePrince_HowardTranslation.txt inputs/LittlePrince_WoodsTranslation.txt
+./compare --sentences inputs/LittlePrince_HowardTranslation.txt inputs/LittlePrince_WoodsTranslation.txt
+./compare --substrings 1 inputs/LittlePrince_HowardTranslation.txt inputs/LittlePrince_WoodsTranslation.txt
+./compare --substrings 2 inputs/LittlePrince_HowardTranslation.txt inputs/LittlePrince_WoodsTranslation.txt
+
+./compare --substrings 4 inputs/LittlePrince_HowardTranslation.txt inputs/LittlePrince_WoodsTranslation.txt
+
+
+def returnss(x,n):
+    # result = [x[i: j] for i in range(len(x)) for j in [i + n] ]
+    result = []
+    for i in range(0, len(x)-n+1):
+        result.append(x[i:(i+n)])
+    return(result)
